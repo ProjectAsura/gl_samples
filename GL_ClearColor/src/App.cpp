@@ -271,6 +271,7 @@ void App::TermWnd()
 //-----------------------------------------------------------------------------
 bool App::InitGL()
 {
+    // デバイスコンテキストを取得.
     m_hDC = GetDC(m_hWnd);
     if (!m_hDC)
     {
@@ -278,6 +279,7 @@ bool App::InitGL()
         return false;
     }
 
+    // ピクセルフォーマットを設定.
     {
         PIXELFORMATDESCRIPTOR pfd = {};
         pfd.nSize       = sizeof(pfd);
@@ -297,35 +299,49 @@ bool App::InitGL()
         }
     }
 
+    // GLレンダリングコンテキストを生成.
     m_hGLContext = wglCreateContext(m_hDC);
+
+    // カレントに設定しておく.
     wglMakeCurrent(m_hDC, m_hGLContext);
 
+    // GLEWの初期化.
+    glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK)
     {
         ELOG("Error : glewInit() Failed.");
         return false;
     }
 
+    // WGLEWの初期化.
     if (wglewInit() != GLEW_OK)
     {
         ELOG("Error : wglewInit() Failed.");
         return false;
     }
 
+    // OpenGL 4.5 Core Profileの設定.
     static const int attr[] = {
         WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
         WGL_CONTEXT_MAJOR_VERSION_ARB, 5,
         WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB
     };
 
+    // バージョン指定したGLレンダリングコンテキストを生成.
     auto hGLRC = wglCreateContextAttribsARB(m_hDC, nullptr, attr);
     if (hGLRC)
     {
+        // カレントを変更.
         wglMakeCurrent(m_hDC, hGLRC);
+
+        // 古いやつを破棄.
         wglDeleteContext(m_hGLContext);
+
+        // 差し替える.
         m_hGLContext = hGLRC;
     }
 
+    // 正常終了.
     return true;
 }
 
@@ -365,7 +381,6 @@ int App::MainLoop()
     LARGE_INTEGER prevTime = {};
     QueryPerformanceFrequency(&ticksPerSec);
     QueryPerformanceCounter(&currTime);
-
 
     while(WM_QUIT != msg.message)
     {
