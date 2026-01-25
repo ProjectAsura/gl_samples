@@ -8,9 +8,12 @@
 // Includes
 //-----------------------------------------------------------------------------
 #include <cstdio>
+#include <vector>
 #include <App.h>
 #include <GL/glew.h>
 #include <GL/wglew.h>
+#include <MiscGL.h>
+#include <asdxMath.h>
 
 
 #ifndef DLOG
@@ -35,6 +38,24 @@
 #endif//APP_WND_CLAASNAME
 
 
+namespace {
+
+//-----------------------------------------------------------------------------
+// Shaders
+//-----------------------------------------------------------------------------
+#include "../res/shaders/Compiled/SimpleVS.inc"
+#include "../res/shaders/Compiled/SimplePS.inc"
+
+struct SceneParam
+{
+    asdx::Matrix    World;
+    asdx::Matrix    View;
+    asdx::Matrix    Proj;
+};
+
+} // namespace
+
+
 ///////////////////////////////////////////////////////////////////////////////
 // App class
 ///////////////////////////////////////////////////////////////////////////////
@@ -43,7 +64,7 @@
 //      コンストラクタです.
 //-----------------------------------------------------------------------------
 App::App()
-: App(L"Sample", 960, 540, nullptr, nullptr, nullptr)
+: App(L"Triangle", 960, 540, nullptr, nullptr, nullptr)
 { /* DO_NOTHING */ }
 
 //-----------------------------------------------------------------------------
@@ -350,17 +371,20 @@ bool App::InitGL()
 //-----------------------------------------------------------------------------
 void App::TermGL()
 {
+    // カレントを無効化.
     if (m_hDC)
     {
         wglMakeCurrent(m_hDC, nullptr);
     }
 
+    // GLレンダリングコンテキストを破棄.
     if (m_hGLContext)
     {
         wglDeleteContext(m_hGLContext);
         m_hGLContext = nullptr;
     }
 
+    // デバイスコンテキストを破棄.
     if (m_hDC && m_hWnd)
     {
         ReleaseDC(m_hWnd, m_hDC);
@@ -443,9 +467,85 @@ float App::GetFPS() const
 //-----------------------------------------------------------------------------
 bool App::OnInit()
 {
+    // 情報を表示.
     ILOG("OpenGL Version : %s", glGetString(GL_VERSION));
     ILOG("Vendor         : %s", glGetString(GL_VENDOR));
     ILOG("Renderer       : %s", glGetString(GL_RENDERER));
+
+    // 頂点シェーダ生成.
+    if (!m_VS.Init(Shader::VS, SimpleVS, sizeof(SimpleVS)))
+    {
+        ELOG("Error : Shader::Init() Failed.");
+        return false;
+    }
+
+    // ピクセルシェーダ生成.
+    if (!m_PS.Init(Shader::PS, SimplePS, sizeof(SimplePS)))
+    {
+        ELOG("Error : Shader::Init() Failed.");
+        return false;
+    }
+
+    // シェーダプログラム生成.
+    const Shader* shaders[] = {
+        &m_VS,
+        &m_PS,
+    };
+    if (!m_Program.Init(shaders, _countof(shaders)))
+    {
+        ELOG("Error : ShaderProgram::Init() Failed.");
+        return false;
+    }
+
+    // 頂点バッファ生成
+    {
+        struct Vertex
+        {
+            asdx::Vector3 Position;
+            asdx::Vector4 Color;
+        };
+        const Vertex vertices[] = {
+            { asdx::Vector3(-1.0f, -1.0f, 0.0f), asdx::Vector4(0.0f, 0.0f, 1.0f, 1.0f) },
+            { asdx::Vector3( 1.0f, -1.0f, 0.0f), asdx::Vector4(0.0f, 1.0f, 0.0f, 1.0f) },
+            { asdx::Vector3( 0.0f,  1.0f, 0.0f), asdx::Vector4(1.0f, 0.0f, 0.0f, 1.0f) },
+        };
+
+        if (!m_VB.Init(vertices, _countof(vertices), sizeof(Vertex)))
+        {
+            ELOG("Error : m_PosVB Init Failed.");
+            return false;
+        }
+    }
+
+    // インデックスバッファ生成
+    {
+        const uint32_t indices[] = { 0, 1, 2 };
+
+        if (!m_IB.Init(indices, _countof(indices)))
+        {
+            ELOG("Error : m_IB Init Failed.");
+            return false;
+        }
+    }
+
+    // ユニフォームバッファ生成.
+    {
+        auto aspectRatio = float(m_Width) / float(m_Height);
+
+        SceneParam param = {};
+        param.World = asdx::Matrix::CreateIdentity();
+        param.View  = asdx::Matrix::CreateLookAt(asdx::Vector3(0.0f, 0.0f, -5.0f), asdx::Vector3(0.0f, 0.0f, 0.0f), asdx::Vector3(0.0f, 1.0f, 0.0f));
+        param.Proj  = asdx::Matrix::CreatePerspectiveFieldOfView(asdx::ToRadian(37.5f), aspectRatio, 0.1f, 1000.0f);
+
+        if (!m_UB.Init(&param, sizeof(param)))
+        {
+            ELOG("Error : m_UB Init Failed.");
+            return false;
+        }
+    }
+
+    if (HasGLError())
+        return false;
 
     return true;
 }
@@ -455,6 +555,11 @@ bool App::OnInit()
 //-----------------------------------------------------------------------------
 void App::OnTerm()
 {
+    m_Program.Term();
+    m_PS.Term();
+    m_VS.Term();
+    m_VB.Term();
+    m_IB.Term();
 }
 
 //-----------------------------------------------------------------------------
@@ -462,6 +567,9 @@ void App::OnTerm()
 //-----------------------------------------------------------------------------
 void App::OnFrameMove()
 {
+    m_RotAngle += 0.05f;
+    auto world = asdx::Matrix::CreateRotationY(m_RotAngle);
+    m_UB.Update(&world, sizeof(world), 0);
 }
 
 //-----------------------------------------------------------------------------
@@ -470,12 +578,32 @@ void App::OnFrameMove()
 void App::OnFrameRender()
 {
     glClearColor(m_ClearColor[0], m_ClearColor[1], m_ClearColor[2], m_ClearColor[2]);
-    glViewport(0, 0, GLsizei(m_Width), GLsizei(m_Height));
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    {
-    }
+    glViewport(0, 0, GLsizei(m_Width), GLsizei(m_Height));
+    glScissor(0, 0, m_Width, m_Height);
 
+    m_Program.Bind();
+    {
+        const Attribute attributes[] = {
+            { 0, 3, GL_FLOAT, GL_FALSE, 0  },
+            { 1, 4, GL_FLOAT, GL_TRUE,  12 },
+        };
+
+        InputLayout layout = { attributes, _countof(attributes) };
+
+        m_VB.Bind(layout);
+        m_IB.Bind();
+        m_UB.Bind(0);
+
+        glDrawElements(GL_TRIANGLES, m_IB.GetIndexCount(), GL_UNSIGNED_INT, 0);
+
+        m_IB.Unbind();
+        m_VB.Unbind(layout);
+    }
+    m_Program.Unbind();
+
+    wglSwapIntervalEXT(1);
     SwapBuffers(m_hDC);
 }
 
